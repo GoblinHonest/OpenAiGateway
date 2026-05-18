@@ -1,0 +1,79 @@
+version: '3.8'
+
+services:
+  gateway:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    container_name: aigateway
+    ports:
+      - "8080:8080"
+      - "9090:9090"
+    volumes:
+      - gateway-data:/app/data
+      - gateway-logs:/app/logs
+      - ./config/config.yaml:/app/config/config.yaml:ro
+    environment:
+      - AIGATEWAY_DATABASE_DSN=/app/data/gateway.db
+      - AIGATEWAY_REDIS_ADDR=redis:6379
+      - AIGATEWAY_AUTH_ADMIN_TOKEN=${ADMIN_TOKEN}
+      - AIGATEWAY_LOG_LEVEL=info
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - gateway-net
+
+  redis:
+    image: redis:7-alpine
+    container_name: aigateway-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy volatile-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - gateway-net
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: aigateway-prometheus
+    ports:
+      - "9091:9090"
+    volumes:
+      - ./docker/prometheus.yaml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    restart: unless-stopped
+    networks:
+      - gateway-net
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: aigateway-grafana
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+    restart: unless-stopped
+    networks:
+      - gateway-net
+
+volumes:
+  gateway-data:
+  gateway-logs:
+  redis-data:
+  prometheus-data:
+  grafana-data:
+
+networks:
+  gateway-net:
+    driver: bridge

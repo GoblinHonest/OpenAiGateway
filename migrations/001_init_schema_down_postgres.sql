@@ -1,0 +1,14 @@
+-- Rollback: Drop all tables (PostgreSQL)
+DROP TABLE IF EXISTS admin_audit_logs CASCADE;
+DROP TABLE IF EXISTS reconciliation_records CASCADE;
+DROP TABLE IF EXISTS circuit_breaker_states CASCADE;
+DROP TABLE IF EXISTS provider_health_checks CASCADE;
+DROP TABLE IF EXISTS api_keys CASCADE;
+DROP TABLE IF EXISTS request_logs CASCADE;
+DROP TABLE IF EXISTS group_models CASCADE;
+DROP TABLE IF EXISTS groups CASCADE;
+DROP TABLE IF EXISTS model_provider_bindings CASCADE;
+DROP TABLE IF EXISTS models CASCADE;
+DROP TABLE IF EXISTS tokens CASCADE;
+DROP TABLE IF EXISTS providers CASCADE;
+DROP TABLE IF EXISTS schema_migrations CASCADE;

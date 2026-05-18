@@ -1,0 +1,59 @@
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+bin/
+/gateway
+
+# Test binary
+*.test
+
+# Output of go coverage
+*.out
+
+# Go workspace
+go.work
+
+# Data
+/data/
+*.db
+*.db-wal
+*.db-shm
+
+# Logs
+/logs/
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Claude Code
+.claude/
+.omo/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
+
+# Build
+/dist/
+/build/
+ui/dist/
+
+# Node
+node_modules/
+
+# Downloaded archives
+AI-Gateway-master/
+
+# Accidental files
+nul;
