@@ -451,19 +451,22 @@ func extractModelFromBody(body any) string {
 }
 
 func selectStreamConverter(sourceFormat, targetFormat protocol.ProtocolFormat) protocol.StreamConverter {
+	// sourceFormat = 客户端请求格式, targetFormat = 上游响应格式
+	// 需要将上游响应格式转换为客户端期望的格式
 	switch {
 	case sourceFormat == protocol.FormatOpenAI && targetFormat == protocol.FormatAnthropic:
-		return protocol.NewOpenAIToAnthropicStreamConverter()
-	case sourceFormat == protocol.FormatOpenAI && targetFormat == protocol.FormatGemini:
-		return protocol.NewOpenAIToGeminiStreamConverter()
-	case sourceFormat == protocol.FormatAnthropic && targetFormat == protocol.FormatOpenAI:
+		// 客户端期望 OpenAI 格式，上游返回 Anthropic 格式 -> 转换 Anthropic 到 OpenAI
 		return protocol.NewAnthropicToOpenAIStreamConverter()
-	case sourceFormat == protocol.FormatAnthropic && targetFormat == protocol.FormatGemini:
-		return protocol.NewAnthropicToGeminiStreamConverter()
-	case sourceFormat == protocol.FormatGemini && targetFormat == protocol.FormatOpenAI:
+	case sourceFormat == protocol.FormatOpenAI && targetFormat == protocol.FormatGemini:
 		return protocol.NewGeminiToOpenAIStreamConverter()
-	case sourceFormat == protocol.FormatGemini && targetFormat == protocol.FormatAnthropic:
+	case sourceFormat == protocol.FormatAnthropic && targetFormat == protocol.FormatOpenAI:
+		return protocol.NewOpenAIToAnthropicStreamConverter()
+	case sourceFormat == protocol.FormatAnthropic && targetFormat == protocol.FormatGemini:
 		return protocol.NewGeminiToAnthropicStreamConverter()
+	case sourceFormat == protocol.FormatGemini && targetFormat == protocol.FormatOpenAI:
+		return protocol.NewOpenAIToGeminiStreamConverter()
+	case sourceFormat == protocol.FormatGemini && targetFormat == protocol.FormatAnthropic:
+		return protocol.NewAnthropicToGeminiStreamConverter()
 	default:
 		return nil
 	}

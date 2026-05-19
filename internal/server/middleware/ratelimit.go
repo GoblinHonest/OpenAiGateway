@@ -32,7 +32,8 @@ func (rl *RateLimiter) Allow(ctx context.Context, key string, limit int, window 
 	}
 
 	if rl.redis == nil {
-		return false, 0, fmt.Errorf("rate limiter: redis client not available")
+		// Redis 不可用时降级放行
+		return true, limit, nil
 	}
 
 	now := time.Now().UnixMilli()
@@ -64,7 +65,8 @@ func (rl *RateLimiter) Allow(ctx context.Context, key string, limit int, window 
 
 	cmd := script.Run(ctx, rl.redis, []string{key}, windowStart, now, limit, window.Milliseconds())
 	if cmd.Err() != nil {
-		return false, 0, fmt.Errorf("rate limiter: redis script failed: %w", cmd.Err())
+		// Redis 执行失败时降级放行
+		return true, limit, nil
 	}
 
 	results, err := cmd.Int64Slice()

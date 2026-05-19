@@ -50,19 +50,30 @@ func SetupRouter(deps *RouterDeps) *gin.Engine {
 
 	// Serve index.html for all non-API routes (SPA support)
 	r.NoRoute(func(c *gin.Context) {
+		path := c.Request.URL.Path
 		// Don't serve index.html for API routes
-		if len(c.Request.URL.Path) > 4 && c.Request.URL.Path[:5] == "/api/" {
+		if len(path) >= 4 && (path[:4] == "/v1/" || path[:4] == "/hea") {
+			c.JSON(404, gin.H{"error": "not found"})
+			return
+		}
+		if len(path) >= 12 && path[:12] == "/admin/v1/" {
+			c.JSON(404, gin.H{"error": "not found"})
+			return
+		}
+		if path == "/health" || path == "/metrics" {
 			c.JSON(404, gin.H{"error": "not found"})
 			return
 		}
 		c.File("./ui/dist/index.html")
 	})
 
-	chatHandler := handler.NewChatHandler(deps.GatewayService, deps.Cfg)
+	chatHandler := handler.NewChatHandler(deps.GatewayService, deps.ModelSvc, deps.GroupSvc, deps.APIKeySvc, deps.Cfg)
 	client := r.Group("/v1")
 	client.Use(middleware.AuthMiddleware(deps.GatewayService))
 	client.Use(deps.RateLimiter.RateLimitMiddleware(deps.Cfg.RateLimit.DefaultRPM))
 	{
+		client.GET("/models", chatHandler.ListModels)
+		client.GET("/models/*model", chatHandler.RetrieveModel)
 		client.POST("/chat/completions", chatHandler.HandleChat)
 		client.POST("/completions", chatHandler.HandleChat)
 		client.POST("/embeddings", chatHandler.HandleChat)

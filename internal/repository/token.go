@@ -32,7 +32,10 @@ func (r *TokenRepository) ListByProvider(ctx context.Context, providerID string,
 	var tokens []*domain.Token
 	var total int64
 
-	query := r.db.WithContext(ctx).Model(&domain.Token{}).Where("provider_id = ?", providerID)
+	query := r.db.WithContext(ctx).Model(&domain.Token{})
+	if providerID != "" {
+		query = query.Where("provider_id = ?", providerID)
+	}
 	if status != "" {
 		query = query.Where("status = ?", status)
 	}
@@ -95,8 +98,9 @@ func (r *TokenRepository) DecrementQuota(ctx context.Context, id string, amount 
 
 func (r *TokenRepository) GetAvailableByProvider(ctx context.Context, providerID string) ([]*domain.Token, error) {
 	var tokens []*domain.Token
+	// quota_total = 0 表示无配额限制，quota_total > 0 时需要 quota_remaining > 0
 	err := r.db.WithContext(ctx).
-		Where("provider_id = ? AND status = ? AND (quota_remaining IS NULL OR quota_remaining > 0) AND rate_limited = ?",
+		Where("provider_id = ? AND status = ? AND (quota_total = 0 OR quota_remaining > 0) AND rate_limited = ?",
 			providerID, domain.TokenStatusActive, false).
 		Find(&tokens).Error
 	return tokens, err

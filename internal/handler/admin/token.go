@@ -19,20 +19,49 @@ func NewTokenHandler(svc *service.TokenService, auditLogger *AuditLogger) *Token
 	return &TokenHandler{svc: svc, auditLogger: auditLogger}
 }
 
+// createTokenRequest 用于解析创建 Token 的请求
+type createTokenRequest struct {
+	ProviderID     string         `json:"provider_id"`
+	Name           string         `json:"name"`
+	TokenValue     string         `json:"token_value"`
+	QuotaTotal     int64          `json:"quota_total"`
+	QuotaRemaining int64          `json:"quota_remaining"`
+	ExpiresAt      string         `json:"expires_at"`
+	Metadata       map[string]any `json:"metadata"`
+}
+
 func (h *TokenHandler) Create(c *gin.Context) {
-	var token domain.Token
-	if err := c.ShouldBindJSON(&token); err != nil {
+	var req createTokenRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	if errs := validateToken(&token); len(errs) > 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": errs.Error()})
+	if req.ProviderID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "provider_id is required"})
+		return
+	}
+	if req.TokenValue == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "token_value is required"})
 		return
 	}
 
+	token := &domain.Token{
+		ProviderID:     req.ProviderID,
+		Name:           req.Name,
+		TokenValue:     req.TokenValue,
+		QuotaTotal:     req.QuotaTotal,
+		QuotaRemaining: req.QuotaRemaining,
+		Metadata:       req.Metadata,
+	}
+
+	// 如果设置了配额且未指定剩余配额，初始化为配额总量
+	if token.QuotaTotal > 0 && token.QuotaRemaining == 0 {
+		token.QuotaRemaining = token.QuotaTotal
+	}
+
 	token.Status = domain.TokenStatusActive
-	if err := h.svc.Create(c.Request.Context(), &token); err != nil {
+	if err := h.svc.Create(c.Request.Context(), token); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -40,7 +69,15 @@ func (h *TokenHandler) Create(c *gin.Context) {
 	h.auditLogger.Log(c.Request.Context(), "create", "token", token.ID, nil,
 		ExtractTokenPrefix(c.GetHeader("Authorization")), c.ClientIP(), c.GetHeader("User-Agent"))
 
-	c.JSON(http.StatusCreated, token)
+	c.JSON(http.StatusCreated, gin.H{
+		"id":              token.ID,
+		"provider_id":     token.ProviderID,
+		"name":            token.Name,
+		"status":          token.Status,
+		"quota_total":     token.QuotaTotal,
+		"quota_remaining": token.QuotaRemaining,
+		"created_at":      token.CreatedAt,
+	})
 }
 
 func (h *TokenHandler) List(c *gin.Context) {

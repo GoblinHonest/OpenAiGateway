@@ -119,7 +119,8 @@ func (c *OpenAIConverter) ConvertRequest(ctx context.Context, r *http.Request, t
 	case FormatAnthropic:
 		messages := make([]AnthropicMessage, 0, len(openAIReq.Messages))
 		for _, m := range openAIReq.Messages {
-			messages = append(messages, AnthropicMessage{Role: m.Role, Content: m.Content})
+			contentBytes, _ := json.Marshal(m.Content)
+			messages = append(messages, AnthropicMessage{Role: m.Role, Content: contentBytes})
 		}
 		anthropicReq := AnthropicRequest{
 			Model:       openAIReq.Model,
@@ -185,16 +186,27 @@ func (c *OpenAIConverter) ConvertRequest(ctx context.Context, r *http.Request, t
 }
 
 func (c *OpenAIConverter) ConvertResponse(ctx context.Context, resp *ProviderResponse, sourceFormat ProtocolFormat) (*http.Response, error) {
-	switch sourceFormat {
-	case FormatOpenAI:
-		body, err := json.Marshal(resp.Body)
+	// 获取响应体的字节数据
+	var bodyBytes []byte
+	switch v := resp.Body.(type) {
+	case []byte:
+		bodyBytes = v
+	case string:
+		bodyBytes = []byte(v)
+	default:
+		var err error
+		bodyBytes, err = json.Marshal(resp.Body)
 		if err != nil {
 			return nil, err
 		}
+	}
+
+	switch sourceFormat {
+	case FormatOpenAI:
 		httpResp := &http.Response{
 			StatusCode: resp.StatusCode,
 			Header:     make(http.Header),
-			Body:       io.NopCloser(bytes.NewReader(body)),
+			Body:       io.NopCloser(bytes.NewReader(bodyBytes)),
 		}
 		httpResp.Header.Set("Content-Type", "application/json")
 		for k, v := range resp.Headers {
@@ -204,11 +216,7 @@ func (c *OpenAIConverter) ConvertResponse(ctx context.Context, resp *ProviderRes
 
 	case FormatAnthropic:
 		var anthropicResp AnthropicResponse
-		data, err := json.Marshal(resp.Body)
-		if err != nil {
-			return nil, err
-		}
-		if err := json.Unmarshal(data, &anthropicResp); err != nil {
+		if err := json.Unmarshal(bodyBytes, &anthropicResp); err != nil {
 			return nil, err
 		}
 		openAIResp := OpenAIResponse{

@@ -159,12 +159,21 @@ func (c *AnthropicToOpenAIStreamConverter) ConvertStream(
 			break
 		}
 
+		// 使用 Event 字段或从 JSON 中解析 type
+		eventType := chunk.Event
+		if eventType == "" {
+			var event map[string]any
+			if err := json.Unmarshal(chunk.Data, &event); err != nil {
+				continue
+			}
+			eventType, _ = event["type"].(string)
+		}
+
+		// 解析事件数据
 		var event map[string]any
 		if err := json.Unmarshal(chunk.Data, &event); err != nil {
 			continue
 		}
-
-		eventType, _ := event["type"].(string)
 
 		switch eventType {
 		case "message_start":

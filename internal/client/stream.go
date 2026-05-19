@@ -40,6 +40,8 @@ func (sr *StreamReader) Stream(ctx context.Context) <-chan StreamChunk {
 		defer close(ch)
 		defer close(sr.done)
 
+		var pendingEvent string
+
 		for {
 			select {
 			case <-ctx.Done():
@@ -70,10 +72,11 @@ func (sr *StreamReader) Stream(ctx context.Context) <-chan StreamChunk {
 					ch <- StreamChunk{Done: true}
 					return
 				}
-				ch <- StreamChunk{Data: []byte(data)}
+				// 将 event 和 data 组合在一起
+				ch <- StreamChunk{Data: []byte(data), Event: pendingEvent}
+				pendingEvent = ""
 			} else if strings.HasPrefix(line, "event: ") {
-				event := strings.TrimPrefix(line, "event: ")
-				ch <- StreamChunk{Event: event}
+				pendingEvent = strings.TrimPrefix(line, "event: ")
 			}
 		}
 	}()

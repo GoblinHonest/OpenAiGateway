@@ -132,7 +132,8 @@ func (c *GeminiConverter) ConvertRequest(ctx context.Context, r *http.Request, t
 			if role == "" {
 				role = "user"
 			}
-			messages = append(messages, AnthropicMessage{Role: role, Content: content})
+			contentBytes, _ := json.Marshal(content)
+			messages = append(messages, AnthropicMessage{Role: role, Content: contentBytes})
 		}
 		anthropicReq := AnthropicRequest{
 			Messages: messages,

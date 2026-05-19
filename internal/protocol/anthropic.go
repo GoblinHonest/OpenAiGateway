@@ -24,8 +24,32 @@ type AnthropicRequest struct {
 }
 
 type AnthropicMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role    string          `json:"role"`
+	Content json.RawMessage `json:"content"`
+}
+
+// GetContentString 获取内容字符串，支持 string 和 array 格式
+func (m *AnthropicMessage) GetContentString() string {
+	// 尝试解析为字符串
+	var s string
+	if err := json.Unmarshal(m.Content, &s); err == nil {
+		return s
+	}
+	// 尝试解析为数组并拼接文本
+	var blocks []struct {
+		Type string `json:"type"`
+		Text string `json:"text,omitempty"`
+	}
+	if err := json.Unmarshal(m.Content, &blocks); err == nil {
+		result := ""
+		for _, block := range blocks {
+			if block.Type == "text" {
+				result += block.Text
+			}
+		}
+		return result
+	}
+	return ""
 }
 
 type AnthropicContent struct {
@@ -87,7 +111,7 @@ func (c *AnthropicConverter) ConvertRequest(ctx context.Context, r *http.Request
 	case FormatOpenAI:
 		messages := make([]OpenAIMessage, 0, len(anthropicReq.Messages))
 		for _, m := range anthropicReq.Messages {
-			messages = append(messages, OpenAIMessage{Role: m.Role, Content: m.Content})
+			messages = append(messages, OpenAIMessage{Role: m.Role, Content: m.GetContentString()})
 		}
 		if anthropicReq.System != "" {
 			messages = append([]OpenAIMessage{{Role: "system", Content: anthropicReq.System}}, messages...)
@@ -117,7 +141,7 @@ func (c *AnthropicConverter) ConvertRequest(ctx context.Context, r *http.Request
 				role = "model"
 			}
 			contents = append(contents, GeminiContent{
-				Parts: []GeminiPart{{Text: m.Content}},
+				Parts: []GeminiPart{{Text: m.GetContentString()}},
 				Role:  role,
 			})
 		}
@@ -151,16 +175,27 @@ func (c *AnthropicConverter) ConvertRequest(ctx context.Context, r *http.Request
 }
 
 func (c *AnthropicConverter) ConvertResponse(ctx context.Context, resp *ProviderResponse, sourceFormat ProtocolFormat) (*http.Response, error) {
-	switch sourceFormat {
-	case FormatAnthropic:
-		body, err := json.Marshal(resp.Body)
+	// 获取响应体的字节数据
+	var bodyBytes []byte
+	switch v := resp.Body.(type) {
+	case []byte:
+		bodyBytes = v
+	case string:
+		bodyBytes = []byte(v)
+	default:
+		var err error
+		bodyBytes, err = json.Marshal(resp.Body)
 		if err != nil {
 			return nil, err
 		}
+	}
+
+	switch sourceFormat {
+	case FormatAnthropic:
 		httpResp := &http.Response{
 			StatusCode: resp.StatusCode,
 			Header:     make(http.Header),
-			Body:       io.NopCloser(bytes.NewReader(body)),
+			Body:       io.NopCloser(bytes.NewReader(bodyBytes)),
 		}
 		httpResp.Header.Set("Content-Type", "application/json")
 		for k, v := range resp.Headers {
@@ -170,11 +205,7 @@ func (c *AnthropicConverter) ConvertResponse(ctx context.Context, resp *Provider
 
 	case FormatOpenAI:
 		var openAIResp OpenAIResponse
-		data, err := json.Marshal(resp.Body)
-		if err != nil {
-			return nil, err
-		}
-		if err := json.Unmarshal(data, &openAIResp); err != nil {
+		if err := json.Unmarshal(bodyBytes, &openAIResp); err != nil {
 			return nil, err
 		}
 		anthropicResp := AnthropicResponse{
