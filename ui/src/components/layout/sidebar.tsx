@@ -7,7 +7,6 @@ import {
   FileText,
   Settings,
   Activity,
-  Database,
   Sun,
   Moon,
   type LucideIcon,
@@ -25,7 +24,7 @@ import {
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
 
-export type Route = "dashboard" | "providers" | "models" | "groups" | "api-keys" | "logs" | "health" | "cache" | "config";
+export type Route = "dashboard" | "providers" | "models" | "groups" | "api-keys" | "logs" | "health" | "config";
 
 export const appNavItems: {
   route: Route;
@@ -39,7 +38,6 @@ export const appNavItems: {
   { route: "api-keys", icon: Key, label: "API Keys" },
   { route: "logs", icon: FileText, label: "日志" },
   { route: "health", icon: Activity, label: "健康监控" },
-  { route: "cache", icon: Database, label: "缓存管理" },
   { route: "config", icon: Settings, label: "配置" },
 ];
 

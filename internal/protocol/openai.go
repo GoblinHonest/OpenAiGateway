@@ -105,15 +105,21 @@ func (c *OpenAIConverter) ConvertRequest(ctx context.Context, r *http.Request, t
 		return nil, fmt.Errorf("failed to parse OpenAI request: %w", err)
 	}
 
+	// 透传客户端请求头
+	clientHeaders := make(map[string]string)
+	for k := range r.Header {
+		clientHeaders[k] = r.Header.Get(k)
+	}
+
 	switch targetFormat {
 	case FormatOpenAI:
+		clientHeaders["Content-Type"] = "application/json"
 		return &ProviderRequest{
-			Method: r.Method,
-			URL:    r.URL.String(),
-			Headers: map[string]string{
-				"Content-Type": "application/json",
-			},
-			Body: openAIReq,
+			Method:       r.Method,
+			URL:          r.URL.String(),
+			Headers:      clientHeaders,
+			Body:         openAIReq,
+			TargetFormat: targetFormat,
 		}, nil
 
 	case FormatAnthropic:
@@ -130,14 +136,14 @@ func (c *OpenAIConverter) ConvertRequest(ctx context.Context, r *http.Request, t
 			Temperature: openAIReq.Temperature,
 			TopP:        openAIReq.TopP,
 		}
+		clientHeaders["Content-Type"] = "application/json"
+		clientHeaders["anthropic-version"] = "2023-06-01"
 		return &ProviderRequest{
-			Method: r.Method,
-			URL:    "/v1/messages",
-			Headers: map[string]string{
-				"Content-Type":      "application/json",
-				"anthropic-version": "2023-06-01",
-			},
-			Body: anthropicReq,
+			Method:       r.Method,
+			URL:          "/v1/messages",
+			Headers:      clientHeaders,
+			Body:         anthropicReq,
+			TargetFormat: targetFormat,
 		}, nil
 
 	case FormatGemini:
@@ -171,13 +177,13 @@ func (c *OpenAIConverter) ConvertRequest(ctx context.Context, r *http.Request, t
 				TopP:            openAIReq.TopP,
 			},
 		}
+		clientHeaders["Content-Type"] = "application/json"
 		return &ProviderRequest{
-			Method: r.Method,
-			URL:    "/v1/models/" + openAIReq.Model + ":generateContent",
-			Headers: map[string]string{
-				"Content-Type": "application/json",
-			},
-			Body: geminiReq,
+			Method:       r.Method,
+			URL:          "/v1/models/" + openAIReq.Model + ":generateContent",
+			Headers:      clientHeaders,
+			Body:         geminiReq,
+			TargetFormat: targetFormat,
 		}, nil
 
 	default:

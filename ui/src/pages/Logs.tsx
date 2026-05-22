@@ -16,13 +16,14 @@ import {
   ChevronRight,
   Calendar,
 } from 'lucide-react'
-import { fetchLogs, LogEntry } from '../api/log'
+import { fetchLogs, fetchLogDetail, LogEntry } from '../api/log'
 import { Button } from '@/components/ui/button'
 import { BentoCard } from '@/components/ui/bento-card'
 import { PageHeader } from '@/components/ui/page-header'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Skeleton } from '@/components/ui/skeleton'
 import {
   Table,
@@ -67,6 +68,194 @@ function LogsSkeleton() {
       <Skeleton className="h-96 rounded-2xl" />
     </div>
   )
+}
+
+// ─── Parsed Request Body ────────────────────────────────────────────────────
+
+function ParsedRequestBody({ body }: { body: string }) {
+  try {
+    const parsed = JSON.parse(body)
+    if (!parsed.messages || !Array.isArray(parsed.messages)) {
+      return <pre className="max-h-96 overflow-auto rounded-lg bg-muted/50 p-3 text-[11px] font-mono leading-relaxed whitespace-pre-wrap">{JSON.stringify(parsed, null, 2)}</pre>
+    }
+
+    const roleColors: Record<string, { bg: string; border: string; label: string }> = {
+      system: { bg: 'bg-slate-50 dark:bg-slate-900/30', border: 'border-slate-200 dark:border-slate-700', label: 'System' },
+      user: { bg: 'bg-blue-50 dark:bg-blue-950/30', border: 'border-blue-200 dark:border-blue-800', label: 'User' },
+      assistant: { bg: 'bg-emerald-50 dark:bg-emerald-950/30', border: 'border-emerald-200 dark:border-emerald-800', label: 'Assistant' },
+      tool: { bg: 'bg-amber-50 dark:bg-amber-950/30', border: 'border-amber-200 dark:border-amber-800', label: 'Tool' },
+    }
+
+    const roleCounters: Record<string, number> = {}
+
+    return (
+      <div className="space-y-2">
+        {/* Other fields */}
+        {Object.entries(parsed).filter(([k]) => k !== 'messages').map(([k, v]) => (
+          <div key={k} className="flex gap-2 text-[11px]">
+            <span className="font-semibold text-muted-foreground shrink-0">{k}:</span>
+            <span className="font-mono break-all">{typeof v === 'string' ? v : JSON.stringify(v)}</span>
+          </div>
+        ))}
+        {/* Messages */}
+        <div className="space-y-2 mt-2">
+          {parsed.messages.map((msg: any, i: number) => {
+            const role = msg.role || 'unknown'
+            roleCounters[role] = (roleCounters[role] || 0) + 1
+            const cfg = roleColors[role] || { bg: 'bg-muted/30', border: 'border-border/60', label: role }
+            const content = typeof msg.content === 'string'
+              ? msg.content
+              : Array.isArray(msg.content)
+                ? msg.content.map((c: any) => c.text || c.type || JSON.stringify(c)).join('\n')
+                : JSON.stringify(msg.content, null, 2)
+
+            return (
+              <div key={i} className={`rounded-lg border ${cfg.border} ${cfg.bg} p-3`}>
+                <div className="flex items-center gap-2 mb-1.5">
+                  <span className="text-[10px] font-bold uppercase tracking-wider">{cfg.label} {roleCounters[role]}</span>
+                  {msg.name && <span className="text-[10px] text-muted-foreground">({msg.name})</span>}
+                </div>
+                <pre className="text-[11px] font-mono leading-relaxed whitespace-pre-wrap break-all max-h-48 overflow-auto">{content}</pre>
+              </div>
+            )
+          })}
+        </div>
+      </div>
+    )
+  } catch {
+    return <pre className="max-h-96 overflow-auto rounded-lg bg-muted/50 p-3 text-[11px] font-mono leading-relaxed whitespace-pre-wrap">{body}</pre>
+  }
+}
+
+// ─── Parse stream chunks from body ──────────────────────────────────────────
+
+function parseStreamChunks(body: string): { chunks: any[]; content: string; usage: any } {
+  const chunks: any[] = []
+  const contentParts: string[] = []
+  let usage: any = null
+
+  // Split by }{ to handle concatenated JSON objects (no newlines)
+  const jsonStrings = body.replace(/}\s*\{/g, '}\n{').split('\n').filter(s => s.trim())
+
+  for (const s of jsonStrings) {
+    try {
+      const obj = JSON.parse(s.trim())
+      chunks.push(obj)
+      if (obj.choices?.[0]?.delta?.content) {
+        contentParts.push(obj.choices[0].delta.content)
+      }
+      if (obj.usage && (obj.usage.prompt_tokens > 0 || obj.usage.completion_tokens > 0 || obj.usage.input_tokens > 0)) {
+        usage = obj.usage
+      }
+      if (obj.type === 'content_block_delta' && obj.delta?.text) {
+        contentParts.push(obj.delta.text)
+      }
+      if (obj.type === 'message_delta' && obj.usage) {
+        usage = obj.usage
+      }
+    } catch { /* skip */ }
+  }
+
+  return { chunks, content: contentParts.join(''), usage }
+}
+
+function StreamChunksView({ chunks, raw }: { chunks: any[]; raw: string }) {
+  const contentParts: string[] = []
+  let usage: any = null
+  for (const obj of chunks) {
+    if (obj.choices?.[0]?.delta?.content) contentParts.push(obj.choices[0].delta.content)
+    if (obj.usage && (obj.usage.prompt_tokens > 0 || obj.usage.completion_tokens > 0)) usage = obj.usage
+    if (obj.type === 'content_block_delta' && obj.delta?.text) contentParts.push(obj.delta.text)
+    if (obj.type === 'message_delta' && obj.usage) usage = obj.usage
+  }
+  const fullContent = contentParts.join('')
+  return (
+    <div className="space-y-3">
+      {fullContent && (
+        <div className="rounded-lg border border-emerald-200 bg-emerald-50 dark:border-emerald-800 dark:bg-emerald-950/30 p-3">
+          <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-400 mb-1.5">Assistant 回复</p>
+          <pre className="text-[11px] font-mono leading-relaxed whitespace-pre-wrap">{fullContent}</pre>
+        </div>
+      )}
+      {usage && (
+        <div className="flex gap-3 text-[11px]">
+          <span className="text-muted-foreground">input: <strong>{usage.prompt_tokens || usage.input_tokens || 0}</strong></span>
+          <span className="text-muted-foreground">output: <strong>{usage.completion_tokens || usage.output_tokens || 0}</strong></span>
+        </div>
+      )}
+      <pre className="max-h-48 overflow-auto rounded-lg bg-muted/50 p-3 text-[11px] font-mono leading-relaxed whitespace-pre-wrap">{raw}</pre>
+    </div>
+  )
+}
+
+// ─── Parsed Response Body ───────────────────────────────────────────────────
+
+function ParsedResponseBody({ body, stream }: { body: string; stream?: boolean }) {
+  try {
+    const parsed = JSON.parse(body)
+    if (Array.isArray(parsed)) {
+      return <StreamChunksView chunks={parsed} raw={body} />
+    }
+    if (parsed.choices) {
+      const content = parsed.choices?.[0]?.message?.content || parsed.choices?.[0]?.text || ''
+      const usage = parsed.usage
+      return (
+        <div className="space-y-3">
+          {content && (
+            <div className="rounded-lg border border-emerald-200 bg-emerald-50 dark:border-emerald-800 dark:bg-emerald-950/30 p-3">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-400 mb-1.5">Assistant</p>
+              <pre className="text-[11px] font-mono leading-relaxed whitespace-pre-wrap">{content}</pre>
+            </div>
+          )}
+          {usage && (
+            <div className="flex gap-3 text-[11px]">
+              <span className="text-muted-foreground">input: <strong>{usage.prompt_tokens || usage.input_tokens || 0}</strong></span>
+              <span className="text-muted-foreground">output: <strong>{usage.completion_tokens || usage.output_tokens || 0}</strong></span>
+            </div>
+          )}
+          <pre className="max-h-48 overflow-auto rounded-lg bg-muted/50 p-3 text-[11px] font-mono leading-relaxed whitespace-pre-wrap">{JSON.stringify(parsed, null, 2)}</pre>
+        </div>
+      )
+    }
+    if (parsed.content || parsed.type === 'message') {
+      const text = parsed.content?.map?.((c: any) => c.text || '').join('') || ''
+      return (
+        <div className="space-y-3">
+          {text && (
+            <div className="rounded-lg border border-emerald-200 bg-emerald-50 dark:border-emerald-800 dark:bg-emerald-950/30 p-3">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-400 mb-1.5">Assistant</p>
+              <pre className="text-[11px] font-mono leading-relaxed whitespace-pre-wrap">{text}</pre>
+            </div>
+          )}
+          <pre className="max-h-48 overflow-auto rounded-lg bg-muted/50 p-3 text-[11px] font-mono leading-relaxed whitespace-pre-wrap">{JSON.stringify(parsed, null, 2)}</pre>
+        </div>
+      )
+    }
+    return <pre className="max-h-96 overflow-auto rounded-lg bg-muted/50 p-3 text-[11px] font-mono leading-relaxed whitespace-pre-wrap">{JSON.stringify(parsed, null, 2)}</pre>
+  } catch {
+    // Streaming: concatenated JSON objects
+    const { chunks, content, usage } = parseStreamChunks(body)
+    return (
+      <div className="space-y-3">
+        {content && (
+          <div className="rounded-lg border border-emerald-200 bg-emerald-50 dark:border-emerald-800 dark:bg-emerald-950/30 p-3">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-400 mb-1.5">Assistant 回复</p>
+            <pre className="text-[11px] font-mono leading-relaxed whitespace-pre-wrap">{content}</pre>
+          </div>
+        )}
+        {usage && (
+          <div className="flex gap-3 text-[11px]">
+            <span className="text-muted-foreground">input: <strong>{usage.prompt_tokens || usage.input_tokens || 0}</strong></span>
+            <span className="text-muted-foreground">output: <strong>{usage.completion_tokens || usage.output_tokens || 0}</strong></span>
+          </div>
+        )}
+        <div>
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-1.5">原始流数据 ({chunks.length} chunks)</p>
+          <pre className="max-h-48 overflow-auto rounded-lg bg-muted/50 p-3 text-[11px] font-mono leading-relaxed whitespace-pre-wrap">{body}</pre>
+        </div>
+      </div>
+    )
+  }
 }
 
 // ─── Main Component ─────────────────────────────────────────────────────────
@@ -318,12 +507,15 @@ export default function Logs() {
                 <TableRow
                   key={log.id}
                   className="cursor-pointer transition-colors"
-                  onClick={() => setSelectedLog(log)}
+                  onClick={() => {
+                    setSelectedLog(log)
+                    fetchLogDetail(log.requestId).then(detail => setSelectedLog(detail)).catch(() => {})
+                  }}
                 >
                   <TableCell className="text-xs text-muted-foreground">
                     <div className="flex items-center gap-1.5">
                       <Clock className="size-3 text-muted-foreground/60" />
-                      {new Date(log.createdAt).toLocaleString()}
+                      {new Date(log.createdAt || log.timestamp).toLocaleString()}
                     </div>
                   </TableCell>
                   <TableCell>
@@ -425,22 +617,17 @@ export default function Logs() {
         )}
       </div>
 
-      {/* ─── Detail Modal ───────────────────────────────────────────────── */}
-      <Dialog open={!!selectedLog} onOpenChange={() => setSelectedLog(null)}>
-        <DialogContent className="max-w-2xl">
+      {/* ─── Detail Dialog ──────────────────────────────────────────────────── */}
+      <Dialog open={!!selectedLog} onOpenChange={(open) => { if (!open) setSelectedLog(null) }}>
+        <DialogContent className="max-w-3xl max-h-[85vh] flex flex-col">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <FileText className="size-5 text-muted-foreground" />
               请求详情
-            </DialogTitle>
-          </DialogHeader>
-          {selectedLog && (
-            <div className="space-y-5">
-              {/* Status & Timing */}
-              <div className="flex items-center gap-3">
+              {selectedLog && (
                 <Badge
                   variant={selectedLog.success ? 'default' : 'destructive'}
-                  className={`text-xs ${
+                  className={`ml-auto text-[10px] ${
                     selectedLog.success
                       ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-400'
                       : ''
@@ -448,102 +635,105 @@ export default function Logs() {
                 >
                   {selectedLog.success ? '成功' : '失败'}
                 </Badge>
-                <span className="text-sm text-muted-foreground">
-                  {new Date(selectedLog.createdAt).toLocaleString()}
-                </span>
-              </div>
-
-              {/* Request Info */}
-              <div className="rounded-xl border border-border/60 bg-muted/30 p-4">
-                <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                  请求信息
-                </p>
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <p className="text-xs text-muted-foreground">请求ID</p>
-                    <p className="mt-0.5 font-mono text-sm">{selectedLog.requestId}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-muted-foreground">路由</p>
-                    <p className="mt-0.5 text-sm">{selectedLog.route || '-'}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-muted-foreground">模型</p>
-                    <p className="mt-0.5 text-sm font-medium">{selectedLog.modelName}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-muted-foreground">服务商</p>
-                    <p className="mt-0.5 text-sm">{selectedLog.providerName || '-'}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-muted-foreground">接口类型</p>
-                    <p className="mt-0.5 text-sm">{selectedLog.interfaceType || '-'}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-muted-foreground">流式</p>
-                    <p className="mt-0.5 text-sm">{selectedLog.stream ? '是' : '否'}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-muted-foreground">API Key</p>
-                    <p className="mt-0.5 text-sm">{selectedLog.apiKeyName || '-'}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-muted-foreground">客户端IP</p>
-                    <p className="mt-0.5 font-mono text-sm">{selectedLog.clientIp || '-'}</p>
-                  </div>
-                </div>
-              </div>
-
-              {/* Performance */}
-              <div className="rounded-xl border border-border/60 bg-muted/30 p-4">
-                <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                  性能指标
-                </p>
-                <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-                  <div>
-                    <p className="text-xs text-muted-foreground">总延迟</p>
-                    <p className={`mt-0.5 text-sm font-semibold tabular-nums ${
-                      selectedLog.totalLatencyMs > 5000 ? 'text-amber-600 dark:text-amber-400' : ''
-                    }`}>
-                      {formatLatency(selectedLog.totalLatencyMs)}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-muted-foreground">首Token延迟</p>
-                    <p className="mt-0.5 text-sm font-semibold tabular-nums">
-                      {selectedLog.firstTokenLatencyMs ? formatLatency(selectedLog.firstTokenLatencyMs) : '-'}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-muted-foreground">输入 Token</p>
-                    <p className="mt-0.5 text-sm font-semibold tabular-nums">
-                      {selectedLog.inputTokens.toLocaleString()}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-muted-foreground">输出 Token</p>
-                    <p className="mt-0.5 text-sm font-semibold tabular-nums">
-                      {selectedLog.outputTokens.toLocaleString()}
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              {/* Error Message */}
-              {selectedLog.errorMessage && (
-                <div className="rounded-xl border border-red-200 bg-red-50 p-4 dark:border-red-800 dark:bg-red-950/20">
-                  <div className="mb-2 flex items-center gap-2">
-                    <AlertCircle className="size-4 text-red-600 dark:text-red-400" />
-                    <p className="text-xs font-semibold uppercase tracking-wider text-red-600 dark:text-red-400">
-                      错误信息
-                    </p>
-                  </div>
-                  <pre className="max-h-40 overflow-auto rounded-lg bg-red-100/50 p-3 text-xs text-red-700 dark:bg-red-900/20 dark:text-red-300">
-                    {selectedLog.errorMessage}
-                  </pre>
-                </div>
               )}
-            </div>
+            </DialogTitle>
+          </DialogHeader>
+          {selectedLog && (
+            <Tabs defaultValue="request" className="flex flex-col min-h-0 flex-1">
+              <TabsList className="shrink-0">
+                <TabsTrigger value="request">请求</TabsTrigger>
+                <TabsTrigger value="response">响应</TabsTrigger>
+              </TabsList>
+
+              {/* ─── Request Tab ────────────────────────────────────────────── */}
+              <TabsContent value="request" className="flex-1 overflow-y-auto space-y-4 mt-3">
+                {/* Meta info */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  {[
+                    { label: '模型', value: selectedLog.modelName },
+                    { label: '服务商', value: selectedLog.providerName || '-' },
+                    { label: '路由', value: selectedLog.route || '-' },
+                    { label: '接口', value: selectedLog.interfaceType || '-' },
+                    { label: '流式', value: selectedLog.stream ? '是' : '否' },
+                    { label: 'API Key', value: selectedLog.apiKeyName || '-' },
+                    { label: '客户端IP', value: selectedLog.clientIp || '-' },
+                    { label: '时间', value: new Date(selectedLog.createdAt || selectedLog.timestamp).toLocaleString() },
+                  ].map(item => (
+                    <div key={item.label} className="rounded-lg border border-border/60 bg-muted/30 px-3 py-2">
+                      <p className="text-[10px] text-muted-foreground uppercase tracking-wider">{item.label}</p>
+                      <p className="mt-0.5 text-xs font-medium truncate">{item.value}</p>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Performance */}
+                <div className="grid grid-cols-4 gap-3">
+                  {[
+                    { label: '总延迟', value: formatLatency(selectedLog.totalLatencyMs), warn: selectedLog.totalLatencyMs > 5000 },
+                    { label: '首Token', value: selectedLog.firstTokenLatencyMs ? formatLatency(selectedLog.firstTokenLatencyMs) : '-' },
+                    { label: '输入Token', value: selectedLog.inputTokens.toLocaleString() },
+                    { label: '输出Token', value: selectedLog.outputTokens.toLocaleString() },
+                  ].map(item => (
+                    <div key={item.label} className="rounded-lg border border-border/60 bg-muted/30 px-3 py-2 text-center">
+                      <p className="text-[10px] text-muted-foreground uppercase tracking-wider">{item.label}</p>
+                      <p className={`mt-0.5 text-sm font-bold tabular-nums ${item.warn ? 'text-amber-600 dark:text-amber-400' : ''}`}>{item.value}</p>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Request Headers */}
+                {selectedLog.requestHeaders && Object.keys(selectedLog.requestHeaders).length > 0 && (
+                  <div>
+                    <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-2">请求头</p>
+                    <pre className="max-h-32 overflow-auto rounded-lg bg-muted/50 p-3 text-[11px] font-mono leading-relaxed">
+                      {Object.entries(selectedLog.requestHeaders).map(([k, v]) => `${k}: ${v}`).join('\n')}
+                    </pre>
+                  </div>
+                )}
+
+                {/* Request Body - parsed as conversation */}
+                {selectedLog.requestBody && (
+                  <div>
+                    <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-2">请求体</p>
+                    <ParsedRequestBody body={selectedLog.requestBody} />
+                  </div>
+                )}
+              </TabsContent>
+
+              {/* ─── Response Tab ───────────────────────────────────────────── */}
+              <TabsContent value="response" className="flex-1 overflow-y-auto space-y-4 mt-3">
+                {/* Response Headers */}
+                {selectedLog.responseHeaders && Object.keys(selectedLog.responseHeaders).length > 0 && (
+                  <div>
+                    <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-2">响应头</p>
+                    <pre className="max-h-32 overflow-auto rounded-lg bg-muted/50 p-3 text-[11px] font-mono leading-relaxed">
+                      {Object.entries(selectedLog.responseHeaders).map(([k, v]) => `${k}: ${v}`).join('\n')}
+                    </pre>
+                  </div>
+                )}
+
+                {/* Response Body */}
+                {selectedLog.responseBody && (
+                  <div>
+                    <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-2">响应体</p>
+                    <ParsedResponseBody body={selectedLog.responseBody} stream={selectedLog.stream} />
+                  </div>
+                )}
+
+                {/* Error */}
+                {selectedLog.errorMessage && (
+                  <div className="rounded-xl border border-red-200 bg-red-50 p-4 dark:border-red-800 dark:bg-red-950/20">
+                    <div className="flex items-center gap-2 mb-2">
+                      <AlertCircle className="size-4 text-red-600 dark:text-red-400" />
+                      <p className="text-xs font-semibold text-red-600 dark:text-red-400">错误信息</p>
+                    </div>
+                    <pre className="max-h-40 overflow-auto rounded-lg bg-red-100/50 p-3 text-xs text-red-700 dark:bg-red-900/20 dark:text-red-300 whitespace-pre-wrap">
+                      {selectedLog.errorMessage}
+                    </pre>
+                  </div>
+                )}
+              </TabsContent>
+            </Tabs>
           )}
         </DialogContent>
       </Dialog>

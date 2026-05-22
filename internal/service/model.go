@@ -36,7 +36,39 @@ func (s *ModelService) List(ctx context.Context, enabled bool, page, pageSize in
 }
 
 func (s *ModelService) Update(ctx context.Context, model *domain.Model) error {
-	return s.repo.Update(ctx, model)
+	existing, err := s.repo.GetByID(ctx, model.ID)
+	if err != nil {
+		return err
+	}
+	// 只覆盖非零值字段，保留原有数据
+	if model.Name != "" {
+		existing.Name = model.Name
+	}
+	if model.DisplayName != "" {
+		existing.DisplayName = model.DisplayName
+	}
+	if model.Description != "" {
+		existing.Description = model.Description
+	}
+	if model.ModelType != "" {
+		existing.ModelType = model.ModelType
+	}
+	if model.ContextWindow != 0 {
+		existing.ContextWindow = model.ContextWindow
+	}
+	if model.MaxOutputTokens != 0 {
+		existing.MaxOutputTokens = model.MaxOutputTokens
+	}
+	if model.InputPricePer1K != 0 {
+		existing.InputPricePer1K = model.InputPricePer1K
+	}
+	if model.OutputPricePer1K != 0 {
+		existing.OutputPricePer1K = model.OutputPricePer1K
+	}
+	if model.Metadata != nil {
+		existing.Metadata = model.Metadata
+	}
+	return s.repo.Update(ctx, existing)
 }
 
 func (s *ModelService) Delete(ctx context.Context, id string) error {

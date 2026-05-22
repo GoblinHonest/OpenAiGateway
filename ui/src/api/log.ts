@@ -21,6 +21,10 @@ export interface LogEntry {
   errorMessage: string
   firstTokenLatencyMs: number
   route: string
+  requestHeaders: Record<string, string>
+  requestBody: string
+  responseHeaders: Record<string, string>
+  responseBody: string
 }
 
 export async function fetchLogs(params: Record<string, string>): Promise<{ items: LogEntry[]; total: number }> {

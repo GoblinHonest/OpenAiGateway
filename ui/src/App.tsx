@@ -24,7 +24,6 @@ const ApiKeys = lazy(() => import("@/pages/ApiKeys"));
 const Logs = lazy(() => import("@/pages/Logs"));
 const Config = lazy(() => import("@/pages/Config"));
 const Health = lazy(() => import("@/pages/Health"));
-const Cache = lazy(() => import("@/pages/Cache"));
 
 const routeLabels: Record<Route, string> = {
   dashboard: "仪表盘",
@@ -34,11 +33,10 @@ const routeLabels: Record<Route, string> = {
   "api-keys": "API Keys",
   logs: "日志",
   health: "健康监控",
-  cache: "缓存管理",
   config: "配置",
 };
 
-const routeOrder: Route[] = ["dashboard", "providers", "models", "groups", "api-keys", "logs", "health", "cache", "config"];
+const routeOrder: Route[] = ["dashboard", "providers", "models", "groups", "api-keys", "logs", "health", "config"];
 
 function PageShellSkeleton() {
   return (
@@ -134,8 +132,6 @@ export default function App() {
         return <Logs />;
       case "health":
         return <Health />;
-      case "cache":
-        return <Cache />;
       case "config":
         return <Config />;
       default:

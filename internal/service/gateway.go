@@ -130,15 +130,23 @@ func (s *GatewayService) Authenticate(ctx context.Context, bearerToken string) (
 	return apiKey, nil
 }
 
-func (s *GatewayService) SelectProviderAndToken(ctx context.Context, modelName string) (*domain.Provider, *domain.Token, *domain.Model, error) {
+func (s *GatewayService) SelectProviderAndToken(ctx context.Context, modelName string) (*domain.Provider, *domain.Token, *domain.Model, string, error) {
 	model, err := s.modelRepo.GetByName(ctx, modelName)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("model not found: %s", modelName)
+		return nil, nil, nil, "", fmt.Errorf("model not found: %s", modelName)
 	}
 
 	bindings, err := s.modelRepo.GetBindings(ctx, model.ID)
 	if err != nil || len(bindings) == 0 {
-		return nil, nil, nil, fmt.Errorf("no providers configured for model: %s", modelName)
+		return nil, nil, nil, "", fmt.Errorf("no providers configured for model: %s", modelName)
+	}
+
+	// 构建 provider -> upstreamModelName 映射
+	upstreamMap := make(map[string]string)
+	for _, b := range bindings {
+		if b.UpstreamModelName != "" {
+			upstreamMap[b.ProviderID] = b.UpstreamModelName
+		}
 	}
 
 	var providers []*domain.Provider
@@ -159,7 +167,7 @@ func (s *GatewayService) SelectProviderAndToken(ctx context.Context, modelName s
 	}
 
 	if len(providers) == 0 {
-		return nil, nil, nil, fmt.Errorf("no available providers for model: %s", modelName)
+		return nil, nil, nil, "", fmt.Errorf("no available providers for model: %s", modelName)
 	}
 
 	strategyName := string(domain.StrategyRoundRobin)
@@ -168,22 +176,24 @@ func (s *GatewayService) SelectProviderAndToken(ctx context.Context, modelName s
 	}
 	strategy, err := s.strategyFactory.Get(strategyName)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, "", err
 	}
 
 	provider, err := strategy.SelectProvider(ctx, providers)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, "", err
 	}
 
 	tokens, err := s.tokenRepo.GetAvailableByProvider(ctx, provider.ID)
 	if err != nil || len(tokens) == 0 {
-		return nil, nil, nil, fmt.Errorf("no available tokens for provider: %s", provider.Name)
+		return nil, nil, nil, "", fmt.Errorf("no available tokens for provider: %s", provider.Name)
 	}
 
 	token := s.selectToken(ctx, tokens)
 
-	return provider, token, model, nil
+	upstreamModelName := upstreamMap[provider.ID]
+
+	return provider, token, model, upstreamModelName, nil
 }
 
 func (s *GatewayService) selectToken(ctx context.Context, tokens []*domain.Token) *domain.Token {
@@ -203,6 +213,40 @@ func (s *GatewayService) selectToken(ctx context.Context, tokens []*domain.Token
 	return tokens[0]
 }
 
+// patchAnthropicStream 确保 Anthropic 流式事件包含必需字段
+func patchAnthropicStream(data []byte, event string) []byte {
+	if event != "message_start" {
+		return data
+	}
+	var obj map[string]any
+	if err := json.Unmarshal(data, &obj); err != nil {
+		return data
+	}
+	msg, ok := obj["message"].(map[string]any)
+	if !ok {
+		return data
+	}
+	if _, hasUsage := msg["usage"]; !hasUsage {
+		msg["usage"] = map[string]any{"input_tokens": 0, "output_tokens": 0}
+		obj["message"] = msg
+		patched, err := json.Marshal(obj)
+		if err == nil {
+			return patched
+		}
+	}
+	return data
+}
+
+func buildUpstreamURL(provider *domain.Provider, req *protocol.ProviderRequest) string {
+	format := string(req.TargetFormat)
+	baseURL := provider.GetURLForFormat(format)
+	path := req.URL
+	if providerPath := provider.GetPathForFormat(format); providerPath != "" {
+		path = providerPath
+	}
+	return strings.TrimRight(baseURL, "/") + "/" + strings.TrimLeft(path, "/")
+}
+
 func (s *GatewayService) ExecuteRequest(ctx context.Context, provider *domain.Provider, token *domain.Token, req *protocol.ProviderRequest) (*protocol.ProviderResponse, error) {
 	var span trace.Span
 	if tracing.Tracer != nil {
@@ -219,7 +263,7 @@ func (s *GatewayService) ExecuteRequest(ctx context.Context, provider *domain.Pr
 		return nil, err
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, req.Method, strings.TrimRight(provider.BaseURL, "/")+"/"+strings.TrimLeft(req.URL, "/"), bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(ctx, req.Method, buildUpstreamURL(provider, req), bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
@@ -228,6 +272,10 @@ func (s *GatewayService) ExecuteRequest(ctx context.Context, provider *domain.Pr
 		httpReq.Header.Set(k, v)
 	}
 	httpReq.Header.Set("Authorization", "Bearer "+token.TokenValue)
+	// 应用服务商自定义请求头（覆盖）
+	for k, v := range provider.CustomHeaders {
+		httpReq.Header.Set(k, v)
+	}
 
 	resp, err := s.httpClient.Do(httpReq)
 	if err != nil {
@@ -343,7 +391,7 @@ func (s *GatewayService) ExecuteStreamPassthrough(ctx context.Context, provider 
 		return nil, err
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, req.Method, strings.TrimRight(provider.BaseURL, "/")+"/"+strings.TrimLeft(req.URL, "/"), bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(ctx, req.Method, buildUpstreamURL(provider, req), bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
@@ -353,6 +401,10 @@ func (s *GatewayService) ExecuteStreamPassthrough(ctx context.Context, provider 
 	}
 	httpReq.Header.Set("Authorization", "Bearer "+token.TokenValue)
 	httpReq.Header.Set("Accept", "text/event-stream")
+	// 应用服务商自定义请求头（覆盖）
+	for k, v := range provider.CustomHeaders {
+		httpReq.Header.Set(k, v)
+	}
 
 	resp, err := s.httpClient.Do(httpReq)
 	if err != nil {
@@ -371,7 +423,9 @@ func (s *GatewayService) ExecuteStreamPassthrough(ctx context.Context, provider 
 		}
 		if len(chunk.Data) > 0 {
 			allData = append(allData, chunk.Data...)
-			if err := sseWriter.WriteData(chunk.Data); err != nil {
+			allData = append(allData, '\n')
+			patched := patchAnthropicStream(chunk.Data, chunk.Event)
+			if err := sseWriter.WriteData(patched); err != nil {
 				return allData, err
 			}
 		}
@@ -386,7 +440,7 @@ func (s *GatewayService) ExecuteStreamWithConversion(ctx context.Context, provid
 		return nil, err
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, req.Method, strings.TrimRight(provider.BaseURL, "/")+"/"+strings.TrimLeft(req.URL, "/"), bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(ctx, req.Method, buildUpstreamURL(provider, req), bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
@@ -396,6 +450,10 @@ func (s *GatewayService) ExecuteStreamWithConversion(ctx context.Context, provid
 	}
 	httpReq.Header.Set("Authorization", "Bearer "+token.TokenValue)
 	httpReq.Header.Set("Accept", "text/event-stream")
+	// 应用服务商自定义请求头（覆盖）
+	for k, v := range provider.CustomHeaders {
+		httpReq.Header.Set(k, v)
+	}
 
 	resp, err := s.httpClient.Do(httpReq)
 	if err != nil {
@@ -412,6 +470,7 @@ func (s *GatewayService) ExecuteStreamWithConversion(ctx context.Context, provid
 		defer close(convertChunks)
 		for ch := range chunks {
 			allData = append(allData, ch.Data...)
+			allData = append(allData, '\n')
 			convertChunks <- protocol.StreamChunk{
 				Data:  ch.Data,
 				Event: ch.Event,
@@ -474,7 +533,14 @@ func selectStreamConverter(sourceFormat, targetFormat protocol.ProtocolFormat) p
 
 func (s *GatewayService) LogRequest(ctx context.Context, reqCtx *RequestContext, req *protocol.ProviderRequest, resp *protocol.ProviderResponse, inputTokens, outputTokens, cacheReadTokens int, err error) {
 	duration := time.Since(reqCtx.StartTime)
-	success := err == nil && resp != nil && resp.StatusCode < 500
+	success := false
+	if resp != nil {
+		success = err == nil && resp.StatusCode < 500
+	} else if reqCtx.IsStreaming {
+		success = err == nil
+	} else {
+		success = err == nil
+	}
 
 	logEntry := &domain.RequestLog{
 		ID:                   utils.GenerateRequestID(),
@@ -533,7 +599,15 @@ func (s *GatewayService) LogRequest(ctx context.Context, reqCtx *RequestContext,
 // LogRequestWithBody 记录请求日志（包含请求/响应体）
 func (s *GatewayService) LogRequestWithBody(ctx context.Context, reqCtx *RequestContext, req *protocol.ProviderRequest, resp *protocol.ProviderResponse, requestBody []byte, requestHeaders map[string]any, responseBody []byte, responseHeaders map[string]any, err error) {
 	duration := time.Since(reqCtx.StartTime)
-	success := err == nil && resp != nil && resp.StatusCode < 500
+	success := false
+	if resp != nil {
+		success = err == nil && resp.StatusCode < 500
+	} else if reqCtx.IsStreaming {
+		// 流式请求没有 resp，只要有响应内容就算成功
+		success = err == nil && len(responseBody) > 0
+	} else {
+		success = err == nil
+	}
 
 	// 解析缓存信息
 	inputTokens, outputTokens, cacheReadTokens := 0, 0, 0
@@ -607,6 +681,71 @@ func (s *GatewayService) LogRequestWithBody(ctx context.Context, reqCtx *Request
 	}
 
 	// Decrement token quota by actual usage
+	if success && reqCtx.TokenID != "" && (inputTokens+outputTokens) > 0 {
+		if token, tokErr := s.tokenRepo.GetByID(ctx, reqCtx.TokenID); tokErr == nil {
+			if _, decErr := s.tokenRepo.DecrementQuota(ctx, reqCtx.TokenID, int64(inputTokens+outputTokens), token.Version); decErr != nil {
+				logger.L.Warn("failed to decrement token quota", zap.String("token_id", reqCtx.TokenID), zap.Error(decErr))
+			}
+		}
+	}
+}
+
+// LogRequestWithBodyAndTokens 记录流式请求日志（含预计算的 token 信息和首 token 延迟）
+func (s *GatewayService) LogRequestWithBodyAndTokens(ctx context.Context, reqCtx *RequestContext, req *protocol.ProviderRequest, resp *protocol.ProviderResponse, requestBody []byte, requestHeaders map[string]any, responseBody []byte, responseHeaders map[string]any, inputTokens, outputTokens, firstTokenMs int, err error) {
+	duration := time.Since(reqCtx.StartTime)
+	success := err == nil && len(responseBody) > 0
+
+	reqBodyStr := string(requestBody)
+	if len(reqBodyStr) > 100000 {
+		reqBodyStr = reqBodyStr[:100000] + "...(truncated)"
+	}
+	respBodyStr := string(responseBody)
+	if len(respBodyStr) > 100000 {
+		respBodyStr = respBodyStr[:100000] + "...(truncated)"
+	}
+
+	logEntry := &domain.RequestLog{
+		ID:                   utils.GenerateRequestID(),
+		RequestID:            reqCtx.RequestID,
+		Timestamp:            time.Now(),
+		ClientIP:             reqCtx.ClientIP,
+		APIKeyID:             reqCtx.APIKeyID,
+		APIKeyName:           reqCtx.APIKeyName,
+		Route:                reqCtx.Route,
+		ModelName:            reqCtx.ModelName,
+		ProviderID:           reqCtx.ProviderID,
+		ProviderName:         reqCtx.ProviderName,
+		TokenID:              reqCtx.TokenID,
+		InterfaceType:        string(reqCtx.SourceFormat),
+		SourceFormat:         string(reqCtx.SourceFormat),
+		TargetFormat:         string(reqCtx.TargetFormat),
+		ProtocolConverted:    reqCtx.SourceFormat != reqCtx.TargetFormat,
+		IsStreaming:          reqCtx.IsStreaming,
+		MaxTokens:            reqCtx.MaxTokens,
+		RequestBodySize:      len(requestBody),
+		RequestHeaders:       requestHeaders,
+		RequestBody:          reqBodyStr,
+		ResponseHeaders:      responseHeaders,
+		ResponseBody:         respBodyStr,
+		InputTokens:          inputTokens,
+		OutputTokens:         outputTokens,
+		TotalTokens:          inputTokens + outputTokens,
+		FirstByteLatencyMs:   firstTokenMs,
+		TotalLatencyMs:       int(duration.Milliseconds()),
+		Success:              success,
+	}
+
+	if resp != nil {
+		logEntry.StatusCode = resp.StatusCode
+	}
+	if err != nil {
+		logEntry.ErrorMessage = err.Error()
+	}
+
+	if err := s.logRepo.Create(ctx, logEntry); err != nil {
+		logger.L.Warn("failed to save request log", zap.Error(err))
+	}
+
 	if success && reqCtx.TokenID != "" && (inputTokens+outputTokens) > 0 {
 		if token, tokErr := s.tokenRepo.GetByID(ctx, reqCtx.TokenID); tokErr == nil {
 			if _, decErr := s.tokenRepo.DecrementQuota(ctx, reqCtx.TokenID, int64(inputTokens+outputTokens), token.Version); decErr != nil {

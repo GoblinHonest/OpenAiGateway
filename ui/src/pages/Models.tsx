@@ -25,6 +25,7 @@ interface ProviderBinding {
   weight: number
   priority: number
   _removed?: boolean          // 编辑模式标记删除
+  _originalProviderId?: string // 编辑模式：原始服务商 ID（用于检测变更）
 }
 
 // ─── Model type config ─────────────────────────────────────────────────────
@@ -112,6 +113,7 @@ export default function Models() {
       upstream_model_name: b.upstream_model_name || '',
       weight: b.weight,
       priority: b.priority,
+      _originalProviderId: b.provider_id,
     }))
     setBindings(mappedBindings)
     // 预加载已绑定服务商的模型列表
@@ -130,10 +132,14 @@ export default function Models() {
       if (editingModel) {
         // 更新模型基本信息
         await updateModel(editingModel.id, form)
-        // 处理绑定：删除标记的，添加新的
+        // 处理绑定：删除标记的，处理变更的，添加新的
         for (const b of bindings) {
           if (b._removed && b.id) {
             try { await removeBinding(b.id!) } catch { /* ignore */ }
+          } else if (b.id && b._originalProviderId && b.provider_id !== b._originalProviderId) {
+            // 服务商变更：删旧建新
+            try { await removeBinding(b.id!) } catch { /* ignore */ }
+            try { await bindProvider(editingModel.id!, b.provider_id, b.upstream_model_name, b.weight, b.priority) } catch { /* ignore */ }
           } else if (!b.id && b.provider_id) {
             try { await bindProvider(editingModel.id!, b.provider_id, b.upstream_model_name, b.weight, b.priority) } catch { /* ignore */ }
           }
@@ -176,6 +182,7 @@ export default function Models() {
     const first = providers.find(p => p.status === 'active')
     if (!first) return
     setBindings([...bindings, { provider_id: first.id, upstream_model_name: '', weight: 1, priority: bindings.length }])
+    fetchModelsForProvider(first.id)
   }
 
   const markBindingRemoved = (i: number) => {

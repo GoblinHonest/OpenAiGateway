@@ -93,13 +93,17 @@ interface ProviderFormData {
   id?: string
   name: string
   base_url: string
+  status: string
   format_endpoints: FormatEndpoint[]
+  custom_headers: Record<string, string>
 }
 
 const emptyForm: ProviderFormData = {
   name: '',
   base_url: '',
+  status: 'active',
   format_endpoints: [{ format: 'openai', url: '', path: '' }],
+  custom_headers: {},
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -240,18 +244,25 @@ export default function Providers() {
       id: p.id,
       name: p.name,
       base_url: p.base_url,
+      status: p.status || 'active',
       format_endpoints: p.format_endpoints?.length
         ? p.format_endpoints
         : (p.supported_formats || ['openai']).map(f => ({ format: f, url: '', path: '' })),
+      custom_headers: p.custom_headers || {},
     })
     setShowModal(true)
   }
 
   const handleSave = async () => {
     try {
+      // 过滤掉空 key 的自定义头
+      const cleanHeaders = Object.fromEntries(
+        Object.entries(form.custom_headers).filter(([k]) => k.trim() !== '')
+      )
       const data = {
         ...form,
         supported_formats: form.format_endpoints.map(ep => ep.format),
+        custom_headers: cleanHeaders,
       }
       if (editingProvider) {
         await updateProvider(editingProvider.id, data)
@@ -351,6 +362,27 @@ export default function Providers() {
     const newEndpoints = [...form.format_endpoints]
     newEndpoints[index] = { ...newEndpoints[index], [field]: value }
     setForm({ ...form, format_endpoints: newEndpoints })
+  }
+
+  // ─── Custom Header Handlers ─────────────────────────────────────────────
+
+  const addCustomHeader = () => {
+    setForm({ ...form, custom_headers: { ...form.custom_headers, '': '' } })
+  }
+
+  const removeCustomHeader = (key: string) => {
+    const { [key]: _, ...rest } = form.custom_headers
+    setForm({ ...form, custom_headers: rest })
+  }
+
+  const updateCustomHeaderKey = (oldKey: string, newKey: string) => {
+    const value = form.custom_headers[oldKey]
+    const { [oldKey]: _, ...rest } = form.custom_headers
+    setForm({ ...form, custom_headers: { ...rest, [newKey]: value } })
+  }
+
+  const updateCustomHeaderValue = (key: string, value: string) => {
+    setForm({ ...form, custom_headers: { ...form.custom_headers, [key]: value } })
   }
 
   // ─── Derived Data ──────────────────────────────────────────────────────
@@ -647,6 +679,20 @@ export default function Providers() {
                       })}
                     </div>
                   </div>
+                  {detailProvider.custom_headers && Object.keys(detailProvider.custom_headers).length > 0 && (
+                    <div className="rounded-lg border border-border/60 bg-muted/30 p-3">
+                      <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">自定义请求头</p>
+                      <div className="mt-2 space-y-1.5">
+                        {Object.entries(detailProvider.custom_headers).map(([k, v]) => (
+                          <div key={k} className="flex items-center gap-2 text-sm">
+                            <span className="font-mono text-xs font-semibold text-foreground">{k}</span>
+                            <span className="text-muted-foreground">:</span>
+                            <span className="font-mono text-xs text-muted-foreground">{v}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </>
               )}
             </TabsContent>
@@ -773,6 +819,22 @@ export default function Providers() {
               <p className="mt-1.5 text-xs text-muted-foreground">默认URL，未配置独立端点时使用</p>
             </div>
             <div>
+              <label className="mb-1.5 block text-[11px] font-medium uppercase tracking-wider text-muted-foreground">状态</label>
+              <Select
+                value={form.status}
+                onValueChange={value => setForm({ ...form, status: value })}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="active">活跃（启用）</SelectItem>
+                  <SelectItem value="inactive">停用（禁用）</SelectItem>
+                  <SelectItem value="maintenance">维护中</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
               <div className="mb-2 flex items-center justify-between">
                 <label className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">格式端点</label>
                 <Button variant="ghost" size="xs" onClick={addFormatEndpoint} className="text-xs text-primary">
@@ -824,6 +886,45 @@ export default function Providers() {
                     </div>
                   )
                 })}
+              </div>
+            </div>
+            <div>
+              <div className="mb-2 flex items-center justify-between">
+                <label className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">自定义请求头</label>
+                <Button variant="ghost" size="xs" onClick={addCustomHeader} className="text-xs text-primary">
+                  <Plus className="mr-1 size-3" />
+                  添加
+                </Button>
+              </div>
+              <p className="mb-3 text-xs text-muted-foreground">覆盖转发到上游服务商的请求头，如 User-Agent</p>
+              <div className="space-y-2">
+                {Object.entries(form.custom_headers).map(([key, value], index) => (
+                  <div key={index} className="flex gap-2 rounded-lg border border-border/60 bg-muted/30 p-3">
+                    <Input
+                      placeholder="Header Name"
+                      value={key}
+                      onChange={e => updateCustomHeaderKey(key, e.target.value)}
+                      className="w-[180px]"
+                    />
+                    <Input
+                      placeholder="Header Value"
+                      value={value}
+                      onChange={e => updateCustomHeaderValue(key, e.target.value)}
+                      className="flex-1"
+                    />
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      onClick={() => removeCustomHeader(key)}
+                      className="text-muted-foreground hover:text-destructive"
+                    >
+                      <Trash2 className="size-4" />
+                    </Button>
+                  </div>
+                ))}
+                {Object.keys(form.custom_headers).length === 0 && (
+                  <p className="py-4 text-center text-xs text-muted-foreground">暂无自定义请求头</p>
+                )}
               </div>
             </div>
           </div>

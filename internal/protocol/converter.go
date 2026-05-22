@@ -15,10 +15,11 @@ const (
 )
 
 type ProviderRequest struct {
-	Method  string
-	URL     string
-	Headers map[string]string
-	Body    any
+	Method       string
+	URL          string
+	Headers      map[string]string
+	Body         any
+	TargetFormat ProtocolFormat
 }
 
 type ProviderResponse struct {

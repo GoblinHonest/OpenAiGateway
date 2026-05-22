@@ -20,6 +20,9 @@ func (s *ProviderService) Create(ctx context.Context, provider *domain.Provider)
 	if provider.ID == "" {
 		provider.ID = utils.GenerateRequestID()
 	}
+	if provider.Status == "" {
+		provider.Status = domain.ProviderStatusActive
+	}
 	return s.repo.Create(ctx, provider)
 }
 
@@ -32,6 +35,14 @@ func (s *ProviderService) List(ctx context.Context, status string, page, pageSiz
 }
 
 func (s *ProviderService) Update(ctx context.Context, provider *domain.Provider) error {
+	existing, err := s.repo.GetByID(ctx, provider.ID)
+	if err != nil {
+		return err
+	}
+	provider.Version = existing.Version
+	if provider.Status == "" {
+		provider.Status = existing.Status
+	}
 	return s.repo.Update(ctx, provider)
 }
 

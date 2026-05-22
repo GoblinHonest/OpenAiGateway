@@ -31,6 +31,7 @@ type Provider struct {
 	RateLimitConfig  map[string]any    `json:"rate_limit_config" gorm:"serializer:json"`
 	TimeoutConfig    map[string]any    `json:"timeout_config" gorm:"serializer:json"`
 	RetryConfig      map[string]any    `json:"retry_config" gorm:"serializer:json"`
+	CustomHeaders    map[string]string `json:"custom_headers" gorm:"serializer:json;default:'{}'"`
 	Priority         int               `json:"-" gorm:"-"`
 	Metadata         map[string]any    `json:"metadata" gorm:"serializer:json"`
 	Version          int               `json:"version" gorm:"not null;default:0"`

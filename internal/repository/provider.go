@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"encoding/json"
 
 	"github.com/example/aigateway/internal/domain"
 	"gorm.io/gorm"
@@ -53,23 +54,36 @@ func (r *ProviderRepository) Update(ctx context.Context, provider *domain.Provid
 	result := r.db.WithContext(ctx).Model(&domain.Provider{}).
 		Where("id = ? AND version = ?", provider.ID, provider.Version).
 		Updates(map[string]any{
-			"name":               provider.Name,
-			"description":        provider.Description,
-			"base_url":           provider.BaseURL,
-			"status":             provider.Status,
-			"supported_formats":  provider.SupportedFormats,
-			"endpoints":          provider.Endpoints,
-			"rate_limit_config":  provider.RateLimitConfig,
-			"timeout_config":     provider.TimeoutConfig,
-			"retry_config":       provider.RetryConfig,
-			"metadata":           provider.Metadata,
-			"version":            gorm.Expr("version + 1"),
+			"name":              provider.Name,
+			"description":       provider.Description,
+			"base_url":          provider.BaseURL,
+			"status":            provider.Status,
+			"format_endpoints":  toJSON(provider.FormatEndpoints),
+			"supported_formats": toJSON(provider.SupportedFormats),
+			"endpoints":         toJSON(provider.Endpoints),
+			"rate_limit_config": toJSON(provider.RateLimitConfig),
+			"timeout_config":    toJSON(provider.TimeoutConfig),
+			"retry_config":      toJSON(provider.RetryConfig),
+			"custom_headers":    toJSON(provider.CustomHeaders),
+			"metadata":          toJSON(provider.Metadata),
+			"version":           gorm.Expr("version + 1"),
 		})
 
 	if result.RowsAffected == 0 {
 		return gorm.ErrRecordNotFound
 	}
 	return result.Error
+}
+
+func toJSON(v any) string {
+	if v == nil {
+		return "{}"
+	}
+	b, err := json.Marshal(v)
+	if err != nil {
+		return "{}"
+	}
+	return string(b)
 }
 
 func (r *ProviderRepository) Delete(ctx context.Context, id string) error {

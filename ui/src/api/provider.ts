@@ -16,6 +16,7 @@ export interface Provider {
   supported_formats: string[]
   format_endpoints: FormatEndpoint[]
   models: string[]
+  custom_headers: Record<string, string>
   created_at: string
 }
 

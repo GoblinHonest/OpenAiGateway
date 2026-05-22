@@ -63,16 +63,16 @@ func (r *ModelRepository) Update(ctx context.Context, model *domain.Model) error
 	return r.db.WithContext(ctx).Model(&domain.Model{}).
 		Where("id = ?", model.ID).
 		Updates(map[string]any{
-			"name":                model.Name,
-			"display_name":        model.DisplayName,
-			"description":         model.Description,
-			"model_type":          model.ModelType,
-			"context_window":      model.ContextWindow,
-			"max_output_tokens":   model.MaxOutputTokens,
-			"input_price_per_1k":  model.InputPricePer1K,
-			"output_price_per_1k": model.OutputPricePer1K,
-			"enabled":             model.Enabled,
-			"metadata":            model.Metadata,
+			"name":                 model.Name,
+			"display_name":         model.DisplayName,
+			"description":          model.Description,
+			"model_type":           model.ModelType,
+			"context_window":       model.ContextWindow,
+			"max_output_tokens":    model.MaxOutputTokens,
+			"input_price_per1_k":   model.InputPricePer1K,
+			"output_price_per1_k":  model.OutputPricePer1K,
+			"enabled":              model.Enabled,
+			"metadata":             toJSON(model.Metadata),
 		}).Error
 }
 

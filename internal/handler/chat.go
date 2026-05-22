@@ -194,7 +194,7 @@ func (h *ChatHandler) HandleChat(c *gin.Context) {
 		return
 	}
 
-	provider, token, _, err := h.gatewayService.SelectProviderAndToken(c.Request.Context(), reqCtx.ModelName)
+	provider, token, _, upstreamModelName, err := h.gatewayService.SelectProviderAndToken(c.Request.Context(), reqCtx.ModelName)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": gin.H{"code": "MODEL_NOT_FOUND", "message": err.Error()}})
 		return
@@ -220,6 +220,17 @@ func (h *ChatHandler) HandleChat(c *gin.Context) {
 			requestHeaders[k] = []string{"Bearer sk-****"}
 		} else {
 			requestHeaders[k] = v
+		}
+	}
+
+	// 如果配置了上游模型名，替换请求体中的 model 字段
+	if upstreamModelName != "" {
+		var bodyMap map[string]any
+		if err := json.Unmarshal(bodyBytes, &bodyMap); err == nil {
+			bodyMap["model"] = upstreamModelName
+			if newBody, err := json.Marshal(bodyMap); err == nil {
+				bodyBytes = newBody
+			}
 		}
 	}
 
@@ -296,15 +307,20 @@ func (h *ChatHandler) handleStream(c *gin.Context, reqCtx *service.RequestContex
 	c.Header("X-Provider", provider.Name)
 	c.Header("X-Token-ID", token.ID)
 
+	startTime := time.Now()
 	var respBody []byte
 	if reqCtx.SourceFormat == reqCtx.TargetFormat {
 		respBody, err = h.gatewayService.ExecuteStreamPassthrough(c.Request.Context(), provider, token, providerReq, sse)
 	} else {
 		respBody, err = h.gatewayService.ExecuteStreamWithConversion(c.Request.Context(), provider, token, providerReq, sse, reqCtx.SourceFormat, reqCtx.TargetFormat)
 	}
+	firstTokenMs := int(time.Since(startTime).Milliseconds())
 
-	// 记录日志（token解析由 LogRequestWithBody 内部完成）
-	h.gatewayService.LogRequestWithBody(c.Request.Context(), reqCtx, providerReq, nil, requestBody, requestHeaders, respBody, nil, err)
+	// 从流式响应中提取 token 使用量
+	inputTokens, outputTokens := extractStreamTokens(respBody, reqCtx.TargetFormat)
+
+	// 记录日志
+	h.gatewayService.LogRequestWithBodyAndTokens(c.Request.Context(), reqCtx, providerReq, nil, requestBody, requestHeaders, respBody, nil, inputTokens, outputTokens, firstTokenMs, err)
 }
 
 func getConverter(format protocol.ProtocolFormat) protocol.Converter {
@@ -316,4 +332,52 @@ func getConverter(format protocol.ProtocolFormat) protocol.Converter {
 	default:
 		return protocol.NewOpenAIConverter()
 	}
+}
+
+// extractStreamTokens 从流式响应中提取 token 使用量
+func extractStreamTokens(respBody []byte, targetFormat protocol.ProtocolFormat) (inputTokens, outputTokens int) {
+	// 流式响应是多个 JSON 对象用换行分隔的
+	lines := bytes.Split(respBody, []byte("\n"))
+	for _, line := range lines {
+		line = bytes.TrimSpace(line)
+		if len(line) == 0 {
+			continue
+		}
+
+		var chunk map[string]any
+		if err := json.Unmarshal(line, &chunk); err != nil {
+			continue
+		}
+
+		switch targetFormat {
+		case protocol.FormatOpenAI, protocol.FormatGemini:
+			if usage, ok := chunk["usage"].(map[string]any); ok {
+				if v, ok := usage["prompt_tokens"].(float64); ok && v > 0 {
+					inputTokens = int(v)
+				}
+				if v, ok := usage["completion_tokens"].(float64); ok && v > 0 {
+					outputTokens = int(v)
+				}
+			}
+		case protocol.FormatAnthropic:
+			// Anthropic 流式：message_start 有 input_tokens，message_delta 有 output_tokens
+			if msgType, _ := chunk["type"].(string); msgType == "message_delta" {
+				if usage, ok := chunk["usage"].(map[string]any); ok {
+					if v, ok := usage["output_tokens"].(float64); ok {
+						outputTokens = int(v)
+					}
+				}
+			}
+		default:
+			if usage, ok := chunk["usage"].(map[string]any); ok {
+				if v, ok := usage["prompt_tokens"].(float64); ok && v > 0 {
+					inputTokens = int(v)
+				}
+				if v, ok := usage["completion_tokens"].(float64); ok && v > 0 {
+					outputTokens = int(v)
+				}
+			}
+		}
+	}
+	return
 }

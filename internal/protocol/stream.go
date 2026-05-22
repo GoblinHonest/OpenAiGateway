@@ -4,9 +4,27 @@ import (
 	"context"
 	"encoding/json"
 	"time"
+	"unicode"
 
 	"github.com/example/aigateway/pkg/utils"
 )
+
+// estimateTokens 根据文本内容估算 token 数
+func estimateTokens(text string) int {
+	tokens := 0
+	for _, r := range text {
+		if unicode.Is(unicode.Han, r) {
+			tokens += 1 // 中文约 1-2 字符/token，取 1 偏多
+		} else {
+			tokens += 1 // 英文约 4 字符/token，按字符计偏多但安全
+		}
+	}
+	// 粗略除以 4 作为英文基准，中文已经按 1 算了所以整体偏保守
+	if tokens > 0 {
+		tokens = tokens/3 + 1
+	}
+	return tokens
+}
 
 type OpenAIToAnthropicStreamConverter struct{}
 
@@ -26,6 +44,7 @@ func (c *OpenAIToAnthropicStreamConverter) ConvertStream(
 			"type":    "message",
 			"role":    "assistant",
 			"content": []any{},
+			"usage":   map[string]any{"input_tokens": 0, "output_tokens": 0},
 		},
 	}
 	if err := targetWriter.WriteEvent("message_start", messageStart); err != nil {
@@ -43,6 +62,9 @@ func (c *OpenAIToAnthropicStreamConverter) ConvertStream(
 	if err := targetWriter.WriteEvent("content_block_start", contentBlockStart); err != nil {
 		return err
 	}
+
+	var outputText string
+	var hasUsage bool
 
 	for chunk := range sourceStream {
 		if chunk.Error != nil {
@@ -71,10 +93,15 @@ func (c *OpenAIToAnthropicStreamConverter) ConvertStream(
 			continue
 		}
 
+		if openAIChunk.Usage != nil && (openAIChunk.Usage.PromptTokens > 0 || openAIChunk.Usage.CompletionTokens > 0) {
+			hasUsage = true
+		}
+
 		if len(openAIChunk.Choices) > 0 {
 			choice := openAIChunk.Choices[0]
 
 			if choice.Delta.Content != "" {
+				outputText += choice.Delta.Content
 				delta := map[string]any{
 					"type": "content_block_delta",
 					"index": 0,
@@ -96,10 +123,14 @@ func (c *OpenAIToAnthropicStreamConverter) ConvertStream(
 					return err
 				}
 
-				usage := map[string]any{"output_tokens": 0}
-				if openAIChunk.Usage != nil {
-					usage["output_tokens"] = openAIChunk.Usage.CompletionTokens
+				outputTokens := 0
+				if hasUsage && openAIChunk.Usage != nil {
+					outputTokens = openAIChunk.Usage.CompletionTokens
+				} else {
+					outputTokens = estimateTokens(outputText)
 				}
+
+				usage := map[string]any{"output_tokens": outputTokens}
 
 				if err := targetWriter.WriteEvent("message_delta", map[string]any{
 					"type": "message_delta",
@@ -552,6 +583,7 @@ func (c *GeminiToAnthropicStreamConverter) ConvertStream(
 			"type":    "message",
 			"role":    "assistant",
 			"content": []any{},
+			"usage":   map[string]any{"input_tokens": 0, "output_tokens": 0},
 		},
 	}
 	if err := targetWriter.WriteEvent("message_start", messageStart); err != nil {
