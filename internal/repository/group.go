@@ -66,10 +66,10 @@ func (r *GroupRepository) Update(ctx context.Context, group *domain.Group) error
 			"name":                  group.Name,
 			"description":           group.Description,
 			"load_balance_strategy": group.LoadBalanceStrategy,
-			"rate_limit_config":     group.RateLimitConfig,
-			"quota_config":          group.QuotaConfig,
+			"rate_limit_config":     toJSON(group.RateLimitConfig),
+			"quota_config":          toJSON(group.QuotaConfig),
 			"enabled":               group.Enabled,
-			"metadata":              group.Metadata,
+			"metadata":              toJSON(group.Metadata),
 			"version":               gorm.Expr("version + 1"),
 		})
 

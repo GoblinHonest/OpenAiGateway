@@ -74,7 +74,7 @@ func (s *StatsService) GetDashboardOverview(ctx context.Context) (*DashboardOver
 	var trendPoints []TrendPoint
 	for _, t := range trend {
 		trendPoints = append(trendPoints, TrendPoint{
-			Time:     t.Time.Format("2006-01-02"),
+			Time:     t.Time,
 			Requests: t.Requests,
 			Tokens:   t.Tokens,
 		})

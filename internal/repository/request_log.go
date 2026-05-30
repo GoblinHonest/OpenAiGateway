@@ -137,9 +137,9 @@ func (r *RequestLogRepository) GetDashboardStats(ctx context.Context) (*Dashboar
 }
 
 type TrendPoint struct {
-	Time    time.Time `json:"time"`
-	Requests int64    `json:"requests"`
-	Tokens   int64    `json:"tokens"`
+	Time    string `json:"time"`
+	Requests int64  `json:"requests"`
+	Tokens   int64  `json:"tokens"`
 }
 
 func (r *RequestLogRepository) GetTokenStats(ctx context.Context, providerID string) ([]map[string]any, error) {

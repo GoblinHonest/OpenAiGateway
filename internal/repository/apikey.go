@@ -68,8 +68,8 @@ func (r *APIKeyRepository) Update(ctx context.Context, apiKey *domain.APIKey) er
 		Updates(map[string]any{
 			"name":              apiKey.Name,
 			"group_id":          apiKey.GroupID,
-			"rate_limit_config": apiKey.RateLimitConfig,
-			"quota_config":      apiKey.QuotaConfig,
+			"rate_limit_config": toJSON(apiKey.RateLimitConfig),
+			"quota_config":      toJSON(apiKey.QuotaConfig),
 			"status":            apiKey.Status,
 			"expires_at":        apiKey.ExpiresAt,
 			"version":           gorm.Expr("version + 1"),

@@ -87,6 +87,10 @@ func (s *APIKeyService) Revoke(ctx context.Context, id string) error {
 	return s.repo.Update(ctx, key)
 }
 
+func (s *APIKeyService) Delete(ctx context.Context, id string) error {
+	return s.repo.Delete(ctx, id)
+}
+
 // Update updates an API key's name, group_id, and rate_limit_config.
 func (s *APIKeyService) Update(ctx context.Context, id string, name, groupID string, rateLimitConfig map[string]any) (*domain.APIKey, error) {
 	key, err := s.repo.GetByID(ctx, id)

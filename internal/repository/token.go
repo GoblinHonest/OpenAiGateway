@@ -69,7 +69,7 @@ func (r *TokenRepository) Update(ctx context.Context, token *domain.Token) error
 			"quota_total":         token.QuotaTotal,
 			"quota_remaining":     token.QuotaRemaining,
 			"quota_reset_at":      token.QuotaResetAt,
-			"metadata":            token.Metadata,
+			"metadata":            toJSON(token.Metadata),
 			"version":             gorm.Expr("version + 1"),
 		})
 

@@ -40,31 +40,25 @@ func SetupRouter(deps *RouterDeps) *gin.Engine {
 	r.Use(middleware.CORSMiddleware(deps.Cfg))
 
 	// Serve static files from UI dist directory
-	r.Static("/assets", "./ui/dist/assets")
-	r.StaticFile("/favicon.ico", "./ui/dist/favicon.ico")
+	r.Static("/Goblin/admin/assets", "./ui/dist/assets")
+	r.StaticFile("/Goblin/admin/favicon.ico", "./ui/dist/favicon.ico")
 
 	healthHandler := handler.NewHealthHandler(deps.DB, deps.HealthChecker, "1.0.0")
 
 	r.GET("/health", healthHandler.Health)
 	r.GET("/metrics", gin.WrapH(promhttp.Handler()))
 
-	// Serve index.html for all non-API routes (SPA support)
-	r.NoRoute(func(c *gin.Context) {
-		path := c.Request.URL.Path
-		// Don't serve index.html for API routes
-		if len(path) >= 4 && (path[:4] == "/v1/" || path[:4] == "/hea") {
-			c.JSON(404, gin.H{"error": "not found"})
-			return
-		}
-		if len(path) >= 12 && path[:12] == "/admin/v1/" {
-			c.JSON(404, gin.H{"error": "not found"})
-			return
-		}
-		if path == "/health" || path == "/metrics" {
-			c.JSON(404, gin.H{"error": "not found"})
-			return
-		}
+	// Serve index.html for admin frontend SPA
+	r.GET("/Goblin/admin", func(c *gin.Context) {
 		c.File("./ui/dist/index.html")
+	})
+	r.GET("/Goblin/admin/*any", func(c *gin.Context) {
+		c.File("./ui/dist/index.html")
+	})
+
+	// NoRoute for API 404
+	r.NoRoute(func(c *gin.Context) {
+		c.JSON(404, gin.H{"error": "not found"})
 	})
 
 	chatHandler := handler.NewChatHandler(deps.GatewayService, deps.ModelSvc, deps.GroupSvc, deps.APIKeySvc, deps.Cfg)
@@ -125,7 +119,7 @@ func SetupRouter(deps *RouterDeps) *gin.Engine {
 		adminRouter.POST("/api-keys", apiKeyHandler.Create)
 		adminRouter.GET("/api-keys", apiKeyHandler.List)
 		adminRouter.GET("/api-keys/:id/reveal", apiKeyHandler.Reveal)
-		adminRouter.DELETE("/api-keys/:id", apiKeyHandler.Revoke)
+		adminRouter.DELETE("/api-keys/:id", apiKeyHandler.Delete)
 
 		statsHandler := admin.NewStatsHandler(deps.StatsSvc)
 		adminRouter.GET("/dashboard/overview", statsHandler.Dashboard)

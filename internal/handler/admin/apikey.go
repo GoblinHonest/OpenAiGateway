@@ -114,6 +114,19 @@ func (h *APIKeyHandler) Revoke(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
+func (h *APIKeyHandler) Delete(c *gin.Context) {
+	id := c.Param("id")
+	if err := h.svc.Delete(c.Request.Context(), id); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	h.auditLogger.Log(c.Request.Context(), "delete", "api_key", id, nil,
+		ExtractTokenPrefix(c.GetHeader("Authorization")), c.ClientIP(), c.GetHeader("User-Agent"))
+
+	c.Status(http.StatusNoContent)
+}
+
 // validateExpiry validates an expiry string (used by validateCreateAPIKeyRequest if needed).
 func validateExpiry(expiresAt string) error {
 	if expiresAt == "" {
